@@ -4,6 +4,7 @@ import { KEY_LOCATIONS, WORKSTATION_DESKS } from '@/constants/officeLayout';
 import { audioFX } from '@/lib/audio';
 import { HermesBackendEvent } from '@/types/events';
 import { calculateVariedRoute } from '@/lib/navigation';
+import * as crowdManager from '@/lib/crowdManager';
 
 interface OfficeState {
   agents: Record<string, Agent>;
@@ -13,6 +14,11 @@ interface OfficeState {
   simulationPhase: 'idle' | 'vp_brief' | 'war_room' | 'working' | 'synthesis' | 'complete';
   dayNightCycle: 'day' | 'evening' | 'night';
   pizzaActive: boolean;
+  // Live WebSocket connection state to the real Hermes backend (see hooks/useHermesSocket.ts).
+  // 'disconnected' also covers "no backend URL configured" — the manual trigger button
+  // in the sidebar always works as a fallback/demo path regardless of this state.
+  connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
+  setConnectionStatus: (status: OfficeState['connectionStatus']) => void;
 
   // Actions
   selectAgent: (id: string | null) => void;
@@ -218,6 +224,9 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
   simulationPhase: 'idle',
   dayNightCycle: 'day',
   pizzaActive: false,
+  connectionStatus: 'disconnected',
+
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
 
   selectAgent: (id) => set({ selectedAgentId: id }),
 
@@ -241,9 +250,15 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
     const agent = get().agents[id];
     if (!agent) return;
 
-    // Calculate transit waypoints for obstacle avoidance & route variety
+    // Randomized transit via-point(s) for route variety — actual pathfinding,
+    // wall/furniture avoidance and agent-agent collision avoidance across
+    // those points is handled entirely by the recast-navigation Crowd
+    // (see lib/crowdManager.ts + components/canvas/CrowdManager.tsx).
     const waypoints = calculateVariedRoute(agent.position, target);
     const nextTarget = waypoints[0] || target;
+
+    crowdManager.setMaxSpeed(id, speedMode === 'run' ? crowdManager.RUN_SPEED : crowdManager.WALK_SPEED);
+    crowdManager.requestMove(id, nextTarget);
 
     set((state) => ({
       agents: {
@@ -520,6 +535,9 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
   },
 
   resetSimulation: () => {
+    Object.values(INITIAL_AGENTS).forEach((agent) => {
+      crowdManager.teleportAgent(agent.id, agent.position);
+    });
     set({
       agents: INITIAL_AGENTS,
       selectedAgentId: null,

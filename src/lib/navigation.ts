@@ -1,5 +1,4 @@
 import { Vector3 } from 'three';
-import { KEY_LOCATIONS } from '@/constants/officeLayout';
 
 // Via-points (transit points) connecting corridors and doors to avoid straight-line wall clipping
 export const CORRIDOR_WAYPOINTS: Record<string, [number, number, number][]> = {

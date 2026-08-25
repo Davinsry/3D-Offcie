@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Text } from '@react-three/drei';
-import { ROOM_BOUNDARIES, WORKSTATION_DESKS } from '@/constants/officeLayout';
+import { Label } from './Label';
+import { ROOM_BOUNDARIES, WORKSTATION_DESKS, WALLS, KEY_LOCATIONS } from '@/constants/officeLayout';
 
 // Wall component helper
 const Wall = ({
@@ -76,9 +76,9 @@ const WorkstationDesk = ({
       <meshStandardMaterial color="#1e293b" />
     </mesh>
     {/* Desk Number Label */}
-    <Text position={[0, 0.76, 0.3]} fontSize={0.15} color="#64748b" rotation={[-Math.PI / 2, 0, 0]}>
+    <Label position={[0, 0.76, 0.3]} fontSize={0.15} color="#64748b" rotation={[-Math.PI / 2, 0, 0]}>
       {`D-${index + 1}`}
-    </Text>
+    </Label>
   </group>
 );
 
@@ -220,6 +220,39 @@ const GymArea = ({ position }: { position: [number, number, number] }) => (
   </group>
 );
 
+// Gaming Corner (TV + couch)
+const GamingCorner = ({ position }: { position: [number, number, number] }) => (
+  <group position={position}>
+    {/* Couch */}
+    <mesh position={[0, 0.28, 0.35]} castShadow receiveShadow>
+      <boxGeometry args={[1.5, 0.5, 0.6]} />
+      <meshStandardMaterial color="#4c1d95" roughness={0.8} />
+    </mesh>
+    <mesh position={[0, 0.62, 0.62]} castShadow>
+      <boxGeometry args={[1.5, 0.4, 0.14]} />
+      <meshStandardMaterial color="#5b21b6" roughness={0.8} />
+    </mesh>
+    {/* TV Stand + Console */}
+    <mesh position={[0, 0.25, -0.6]} castShadow receiveShadow>
+      <boxGeometry args={[1.2, 0.4, 0.3]} />
+      <meshStandardMaterial color="#0f172a" roughness={0.4} />
+    </mesh>
+    <mesh position={[0.35, 0.48, -0.6]} castShadow>
+      <boxGeometry args={[0.28, 0.06, 0.2]} />
+      <meshStandardMaterial color="#1e293b" metalness={0.7} />
+    </mesh>
+    {/* TV Screen */}
+    <mesh position={[0, 1.15, -0.75]}>
+      <boxGeometry args={[1.3, 0.75, 0.06]} />
+      <meshStandardMaterial color="#020617" roughness={0.2} />
+    </mesh>
+    <mesh position={[0, 1.15, -0.71]}>
+      <planeGeometry args={[1.2, 0.65]} />
+      <meshBasicMaterial color="#7c3aed" />
+    </mesh>
+  </group>
+);
+
 // Pantry counter & coffee machine
 const PantryArea = ({ position }: { position: [number, number, number] }) => (
   <group position={position}>
@@ -262,7 +295,7 @@ export const OfficeLayout = () => {
             <planeGeometry args={[room.bounds.width - 0.2, room.bounds.depth - 0.2]} />
             <meshStandardMaterial color={room.color} roughness={0.6} opacity={0.15} transparent />
           </mesh>
-          <Text
+          <Label
             position={[0, 0.02, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
             fontSize={0.5}
@@ -271,31 +304,20 @@ export const OfficeLayout = () => {
             anchorY="middle"
           >
             {room.name.toUpperCase()}
-          </Text>
+          </Label>
         </group>
       ))}
 
-      {/* Perimeter Walls (Office Outer Boundaries) */}
-      {/* North Wall */}
-      <Wall position={[0, 1.5, -14.5]} args={[38, 3, 0.4]} />
-      {/* South Wall */}
-      <Wall position={[0, 1.5, 14.5]} args={[38, 3, 0.4]} />
-      {/* West Wall */}
-      <Wall position={[-18.5, 1.5, 0]} args={[0.4, 3, 29]} />
-      {/* East Wall */}
-      <Wall position={[18.5, 1.5, 0]} args={[0.4, 3, 29]} />
-
-      {/* Interior Dividers */}
-      {/* VP / Manager divider */}
-      <Wall position={[-9.5, 1.2, -10]} args={[0.2, 2.4, 8]} color="#1e293b" />
-      {/* Manager / War Room divider */}
-      <Wall position={[-0.5, 1.2, -10]} args={[0.2, 2.4, 8]} color="#1e293b" />
-      {/* North / South main hallway divider */}
-      <Wall position={[-5, 1.2, -5.5]} args={[26, 2.4, 0.2]} color="#1e293b" />
-      {/* Restroom / Lounge divider */}
-      <Wall position={[-14, 1.2, 2.5]} args={[8, 2.4, 0.2]} color="#1e293b" />
-      {/* Lounge / Workstations divider */}
-      <Wall position={[0, 1.2, 4]} args={[0.2, 2.4, 16]} color="#1e293b" />
+      {/* Perimeter Walls & Interior Dividers — driven by the shared WALLS constant
+          so the rendered geometry and the navmesh baked in lib/navmesh.ts can never drift apart. */}
+      {WALLS.map((wall) => (
+        <Wall
+          key={wall.id}
+          position={wall.position}
+          args={wall.size}
+          color={wall.id.startsWith('wall_') && wall.id !== 'wall_north' && wall.id !== 'wall_south' && wall.id !== 'wall_west' && wall.id !== 'wall_east' ? '#1e293b' : '#334155'}
+        />
+      ))}
 
       {/* Specific Room Furniture */}
       {/* VP Office Desk */}
@@ -338,6 +360,9 @@ export const OfficeLayout = () => {
 
       {/* Gym Corner in Lounge */}
       <GymArea position={[-7, 0, 10]} />
+
+      {/* Gaming Corner (TV + couch) in Lounge */}
+      <GamingCorner position={KEY_LOCATIONS.lounge_gaming} />
 
       {/* Pantry */}
       <PantryArea position={[-14, 0, 8]} />

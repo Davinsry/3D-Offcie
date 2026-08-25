@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { OfficeSidebar } from '@/components/ui/OfficeSidebar';
+import { useHermesSocket } from '@/hooks/useHermesSocket';
 
 // Load 3D Canvas dynamically to avoid SSR window/WebGL issues
 const OfficeScene = dynamic(
@@ -20,6 +21,8 @@ const OfficeScene = dynamic(
 );
 
 export default function Home() {
+  useHermesSocket();
+
   return (
     <main className="flex h-screen w-screen overflow-hidden bg-slate-950 select-none">
       <OfficeSidebar />

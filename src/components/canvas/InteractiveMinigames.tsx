@@ -1,133 +1,148 @@
 'use client';
 
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Text } from '@react-three/drei';
 import * as THREE from 'three';
+import { RigidBody, CuboidCollider, type RapierRigidBody, type IntersectionEnterPayload } from '@react-three/rapier';
 import { audioFX } from '@/lib/audio';
 
-// Interactive Billiards with Rapier Physics or High-Fidelity Collision Simulation
+const BALL_COLORS = ['#ffffff', '#eab308', '#3b82f6', '#ef4444', '#a855f7', '#0f172a', '#10b981'];
+const RACK_POSITIONS: [number, number, number][] = [
+  [-0.6, 0.92, 0],
+  [0.3, 0.92, 0],
+  [0.42, 0.92, 0.07],
+  [0.42, 0.92, -0.07],
+  [0.54, 0.92, 0.14],
+  [0.54, 0.92, 0],
+  [0.54, 0.92, -0.14],
+];
+const POCKETS: [number, number][] = [
+  [-1.32, -0.6],
+  [0, -0.62],
+  [1.32, -0.6],
+  [-1.32, 0.6],
+  [0, 0.62],
+  [1.32, 0.6],
+];
+const HOLD_AREA: [number, number, number] = [1.9, 0.92, -0.7];
+
+// Real Rapier-physics billiards: dynamic RigidBody spheres for each ball, fixed
+// cushion colliders around the table, sensor colliders at each pocket. Two NPC
+// "players" alternate — every few seconds, once all balls have settled, the cue
+// ball gets an impulse aimed at a random remaining ball.
 export const BilliardMinigame = ({ position }: { position: [number, number, number] }) => {
-  const [balls, setBalls] = useState([
-    { id: 0, pos: new THREE.Vector3(-0.6, 0.86, 0), vel: new THREE.Vector3(0, 0, 0), color: '#ffffff', isCue: true },
-    { id: 1, pos: new THREE.Vector3(0.3, 0.86, 0), vel: new THREE.Vector3(0, 0, 0), color: '#eab308' },
-    { id: 2, pos: new THREE.Vector3(0.42, 0.86, 0.07), vel: new THREE.Vector3(0, 0, 0), color: '#3b82f6' },
-    { id: 3, pos: new THREE.Vector3(0.42, 0.86, -0.07), vel: new THREE.Vector3(0, 0, 0), color: '#ef4444' },
-    { id: 4, pos: new THREE.Vector3(0.54, 0.86, 0.14), vel: new THREE.Vector3(0, 0, 0), color: '#a855f7' },
-    { id: 5, pos: new THREE.Vector3(0.54, 0.86, 0), vel: new THREE.Vector3(0, 0, 0), color: '#0f172a' }, // 8-ball
-    { id: 6, pos: new THREE.Vector3(0.54, 0.86, -0.14), vel: new THREE.Vector3(0, 0, 0), color: '#10b981' },
-  ]);
+  const ballRefs = useRef<Map<number, RapierRigidBody>>(new Map());
+  const lastShotTime = useRef<number | null>(null);
+  const pottedCount = useRef(0);
 
-  const lastShotTime = useRef(Date.now());
-  const tableBounds = { minX: -1.3, maxX: 1.3, minZ: -0.62, maxZ: 0.62 };
-  const pockets = useMemo(() => [
-    new THREE.Vector3(-1.3, 0.86, -0.62),
-    new THREE.Vector3(0, 0.86, -0.64),
-    new THREE.Vector3(1.3, 0.86, -0.62),
-    new THREE.Vector3(-1.3, 0.86, 0.62),
-    new THREE.Vector3(0, 0.86, 0.64),
-    new THREE.Vector3(1.3, 0.86, 0.62),
-  ], []);
-
-  useFrame((_, delta) => {
-    const dt = Math.min(delta, 0.05);
-
-    // AI Shot trigger every 4 seconds if all balls are mostly stopped
-    const now = Date.now();
-    const totalSpeed = balls.reduce((acc, b) => acc + b.vel.length(), 0);
-    if (now - lastShotTime.current > 3500 && totalSpeed < 0.05) {
-      lastShotTime.current = now;
-      // NPC aim cue ball towards target ball
-      const cue = balls[0];
-      const targetBall = balls[1 + Math.floor(Math.random() * (balls.length - 1))];
-      if (cue && targetBall) {
-        const dir = new THREE.Vector3().subVectors(targetBall.pos, cue.pos).normalize();
-        cue.vel.copy(dir.multiplyScalar(2.5 + Math.random() * 1.5));
-        audioFX.billiardHit(0.5);
-      }
+  const handlePocket = (ballIndex: number) => (payload: IntersectionEnterPayload) => {
+    const body = payload.other.rigidBody;
+    if (!body) return;
+    audioFX.billiardHit(0.6);
+    if (ballIndex === 0) {
+      // Cue ball potted — spot it back at the break position.
+      body.setTranslation({ x: RACK_POSITIONS[0][0], y: RACK_POSITIONS[0][1], z: RACK_POSITIONS[0][2] }, true);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    } else {
+      // Object ball potted — move it to the holding rack beside the table.
+      pottedCount.current += 1;
+      const [hx, hy, hz] = HOLD_AREA;
+      body.setTranslation({ x: hx, y: hy, z: hz + pottedCount.current * 0.12 }, true);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
+  };
 
-    // Step ball physics
-    balls.forEach((b1, i) => {
-      if (b1.vel.length() > 0.001) {
-        b1.pos.addScaledVector(b1.vel, dt);
-        b1.vel.multiplyScalar(0.985); // Table friction
+  useFrame(() => {
+    const now = Date.now();
+    if (lastShotTime.current === null) lastShotTime.current = now;
+    if (now - lastShotTime.current < 3500) return;
 
-        // Wall cushion bounce
-        if (b1.pos.x <= tableBounds.minX || b1.pos.x >= tableBounds.maxX) {
-          b1.vel.x *= -0.85;
-          b1.pos.x = THREE.MathUtils.clamp(b1.pos.x, tableBounds.minX, tableBounds.maxX);
-          audioFX.billiardHit(0.2);
-        }
-        if (b1.pos.z <= tableBounds.minZ || b1.pos.z >= tableBounds.maxZ) {
-          b1.vel.z *= -0.85;
-          b1.pos.z = THREE.MathUtils.clamp(b1.pos.z, tableBounds.minZ, tableBounds.maxZ);
-          audioFX.billiardHit(0.2);
-        }
-
-        // Pocket check
-        pockets.forEach((p) => {
-          if (b1.pos.distanceTo(p) < 0.12) {
-            // Ball potted
-            audioFX.billiardHit(0.6);
-            if (b1.isCue) {
-              b1.pos.set(-0.6, 0.86, 0);
-              b1.vel.set(0, 0, 0);
-            } else {
-              b1.pos.set(1.6 + Math.random() * 0.2, 0.86, (Math.random() - 0.5) * 0.4);
-              b1.vel.set(0, 0, 0);
-            }
-          }
-        });
-
-        // Ball-to-ball collisions
-        for (let j = i + 1; j < balls.length; j++) {
-          const b2 = balls[j];
-          const dist = b1.pos.distanceTo(b2.pos);
-          const r = 0.09;
-          if (dist < r && dist > 0) {
-            const normal = new THREE.Vector3().subVectors(b1.pos, b2.pos).normalize();
-            const relVel = new THREE.Vector3().subVectors(b1.vel, b2.vel);
-            const sepSpeed = relVel.dot(normal);
-            if (sepSpeed < 0) {
-              const impulse = -(1 + 0.9) * sepSpeed * 0.5;
-              b1.vel.addScaledVector(normal, impulse);
-              b2.vel.addScaledVector(normal, -impulse);
-              audioFX.billiardHit(Math.min(0.4, Math.abs(sepSpeed) * 0.2));
-            }
-          }
-        }
-      }
+    let totalSpeed = 0;
+    ballRefs.current.forEach((body) => {
+      totalSpeed += new THREE.Vector3().copy(body.linvel()).length();
     });
+    if (totalSpeed > 0.05) return;
+
+    const cue = ballRefs.current.get(0);
+    const others = [...ballRefs.current.entries()].filter(([idx]) => idx !== 0);
+    if (!cue || others.length === 0) return;
+    const [, targetBody] = others[Math.floor(Math.random() * others.length)];
+
+    const cuePos = cue.translation();
+    const targetPos = targetBody.translation();
+    const dir = new THREE.Vector3(targetPos.x - cuePos.x, 0, targetPos.z - cuePos.z).normalize();
+    const power = 2.2 + Math.random() * 1.4;
+    cue.setLinvel({ x: dir.x * power, y: 0, z: dir.z * power }, true);
+    audioFX.billiardHit(0.5);
+    lastShotTime.current = now;
   });
 
   return (
     <group position={position}>
-      {/* Table Structure */}
-      <mesh position={[0, 0.7, 0]} castShadow receiveShadow>
-        <boxGeometry args={[3.2, 0.25, 1.8]} />
-        <meshStandardMaterial color="#3f2314" roughness={0.4} />
-      </mesh>
-      {/* Table Surface */}
-      <mesh position={[0, 0.83, 0]} receiveShadow>
-        <boxGeometry args={[2.8, 0.02, 1.4]} />
-        <meshStandardMaterial color="#047857" roughness={0.9} />
-      </mesh>
+      <RigidBody type="fixed" colliders={false} friction={0.9} restitution={0.2}>
+        {/* Table frame */}
+        <mesh position={[0, 0.7, 0]} castShadow receiveShadow>
+          <boxGeometry args={[3.2, 0.25, 1.8]} />
+          <meshStandardMaterial color="#3f2314" roughness={0.4} />
+        </mesh>
+        {/* Playing surface (floor collider for the balls) */}
+        <mesh position={[0, 0.83, 0]} receiveShadow>
+          <boxGeometry args={[2.8, 0.02, 1.4]} />
+          <meshStandardMaterial color="#047857" roughness={0.9} />
+        </mesh>
+        <CuboidCollider args={[1.4, 0.02, 0.7]} position={[0, 0.83, 0]} friction={0.6} />
+        {/* Cushions */}
+        <CuboidCollider args={[0.03, 0.08, 0.66]} position={[-1.33, 0.9, 0]} restitution={0.75} />
+        <CuboidCollider args={[0.03, 0.08, 0.66]} position={[1.33, 0.9, 0]} restitution={0.75} />
+        <CuboidCollider args={[1.33, 0.08, 0.03]} position={[0, 0.9, -0.65]} restitution={0.75} />
+        <CuboidCollider args={[1.33, 0.08, 0.03]} position={[0, 0.9, 0.65]} restitution={0.75} />
+      </RigidBody>
 
-      {/* 6 Pockets */}
-      {pockets.map((p, idx) => (
-        <mesh key={`pocket-${idx}`} position={[p.x, 0.84, p.z]}>
+      {/* 6 Pockets (sensors) */}
+      {POCKETS.map(([px, pz], idx) => (
+        <mesh key={`pocket-${idx}`} position={[px, 0.84, pz]}>
           <cylinderGeometry args={[0.07, 0.07, 0.02, 16]} />
           <meshBasicMaterial color="#0f172a" />
         </mesh>
       ))}
+      <RigidBody type="fixed" colliders={false} sensor>
+        {POCKETS.map(([px, pz], idx) => (
+          <CuboidCollider
+            key={`pocket-sensor-${idx}`}
+            args={[0.09, 0.15, 0.09]}
+            position={[px, 0.8, pz]}
+            sensor
+            onIntersectionEnter={(payload) => {
+              const idxOfBall = [...ballRefs.current.entries()].find(([, b]) => b === payload.other.rigidBody)?.[0];
+              if (idxOfBall !== undefined) handlePocket(idxOfBall)(payload);
+            }}
+          />
+        ))}
+      </RigidBody>
 
       {/* Balls */}
-      {balls.map((b) => (
-        <mesh key={`ball-${b.id}`} position={[b.pos.x, b.pos.y, b.pos.z]} castShadow>
-          <sphereGeometry args={[0.045, 16, 16]} />
-          <meshStandardMaterial color={b.color} roughness={0.15} metalness={0.1} />
-        </mesh>
+      {RACK_POSITIONS.map((pos, idx) => (
+        <RigidBody
+          key={`ball-${idx}`}
+          ref={(body) => {
+            if (body) ballRefs.current.set(idx, body);
+            else ballRefs.current.delete(idx);
+          }}
+          position={pos}
+          colliders="ball"
+          restitution={0.85}
+          friction={0.15}
+          linearDamping={0.5}
+          angularDamping={0.6}
+          onCollisionEnter={() => audioFX.billiardHit(0.2)}
+        >
+          <mesh castShadow>
+            <sphereGeometry args={[0.045, 16, 16]} />
+            <meshStandardMaterial color={BALL_COLORS[idx]} roughness={0.15} metalness={0.1} />
+          </mesh>
+        </RigidBody>
       ))}
 
       {/* Table Legs */}
@@ -143,116 +158,117 @@ export const BilliardMinigame = ({ position }: { position: [number, number, numb
   );
 };
 
-// Interactive Ping Pong Minigame with NPC Reactive Paddles
+// Real Rapier-physics ping pong: dynamic ball under gravity bouncing off the
+// table + net colliders, kinematic paddle RigidBodies that an AI drives to
+// track the ball's z position — contact with a kinematic body pushes the
+// dynamic ball just like a real paddle hit.
 export const PingPongMinigame = ({ position }: { position: [number, number, number] }) => {
-  const ballPos = useRef(new THREE.Vector3(0, 0.85, 0));
-  const ballVel = useRef(new THREE.Vector3(2.5, 0.8, 0.5));
+  const ballRef = useRef<RapierRigidBody>(null);
+  const leftPaddleRef = useRef<RapierRigidBody>(null);
+  const rightPaddleRef = useRef<RapierRigidBody>(null);
   const paddleLeftZ = useRef(0);
   const paddleRightZ = useRef(0);
-  const ballMesh = useRef<THREE.Mesh>(null);
-  const leftPaddleMesh = useRef<THREE.Mesh>(null);
-  const rightPaddleMesh = useRef<THREE.Mesh>(null);
+
+  const resetBall = () => {
+    const ball = ballRef.current;
+    if (!ball) return;
+    ball.setTranslation({ x: 0, y: 1.1, z: 0 }, true);
+    ball.setLinvel({ x: Math.random() > 0.5 ? 2.3 : -2.3, y: 1.0, z: (Math.random() - 0.5) * 1.2 }, true);
+    ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  };
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
+    const ball = ballRef.current;
+    if (!ball) return;
 
-    // Ball gravity & motion
-    ballVel.current.y -= 9.8 * dt;
-    ballPos.current.addScaledVector(ballVel.current, dt);
-
-    // Table bounce (Y = 0.76)
-    if (ballPos.current.y <= 0.76 && Math.abs(ballPos.current.x) < 1.35 && Math.abs(ballPos.current.z) < 0.7) {
-      ballPos.current.y = 0.76;
-      ballVel.current.y = 2.2;
-      audioFX.billiardHit(0.15);
+    const pos = ball.translation();
+    if (Math.abs(pos.x) > 2.0 || pos.y < 0.2) {
+      resetBall();
+      return;
     }
 
-    // AI reactive paddles follow ball Z
-    paddleLeftZ.current = THREE.MathUtils.lerp(paddleLeftZ.current, ballPos.current.z, dt * 6);
-    paddleRightZ.current = THREE.MathUtils.lerp(paddleRightZ.current, ballPos.current.z, dt * 6);
-
-    // Left Paddle hit (X = -1.25)
-    if (ballPos.current.x <= -1.25 && Math.abs(ballPos.current.z - paddleLeftZ.current) < 0.3) {
-      ballVel.current.x = Math.abs(ballVel.current.x) * 1.02;
-      ballVel.current.z += (Math.random() - 0.5) * 1.2;
-      ballVel.current.y = 2.0;
-      audioFX.billiardHit(0.3);
-    }
-
-    // Right Paddle hit (X = 1.25)
-    if (ballPos.current.x >= 1.25 && Math.abs(ballPos.current.z - paddleRightZ.current) < 0.3) {
-      ballVel.current.x = -Math.abs(ballVel.current.x) * 1.02;
-      ballVel.current.z += (Math.random() - 0.5) * 1.2;
-      ballVel.current.y = 2.0;
-      audioFX.billiardHit(0.3);
-    }
-
-    // Out of bounds reset
-    if (Math.abs(ballPos.current.x) > 2.0 || ballPos.current.y < 0.2) {
-      ballPos.current.set(0, 1.1, 0);
-      ballVel.current.set(Math.random() > 0.5 ? 2.5 : -2.5, 1.2, (Math.random() - 0.5) * 1.5);
-    }
-
-    if (ballMesh.current) ballMesh.current.position.copy(ballPos.current);
-    if (leftPaddleMesh.current) leftPaddleMesh.current.position.set(-1.3, 0.85, paddleLeftZ.current);
-    if (rightPaddleMesh.current) rightPaddleMesh.current.position.set(1.3, 0.85, paddleRightZ.current);
+    paddleLeftZ.current = THREE.MathUtils.lerp(paddleLeftZ.current, pos.z, dt * 6);
+    paddleRightZ.current = THREE.MathUtils.lerp(paddleRightZ.current, pos.z, dt * 6);
+    leftPaddleRef.current?.setNextKinematicTranslation({ x: -1.3, y: 0.85, z: paddleLeftZ.current });
+    rightPaddleRef.current?.setNextKinematicTranslation({ x: 1.3, y: 0.85, z: paddleRightZ.current });
   });
 
   return (
     <group position={position}>
-      {/* Ping Pong Table Top */}
-      <mesh position={[0, 0.72, 0]} castShadow receiveShadow>
-        <boxGeometry args={[2.7, 0.05, 1.5]} />
-        <meshStandardMaterial color="#1d4ed8" roughness={0.3} />
-      </mesh>
-      {/* Table Center Stripe */}
-      <mesh position={[0, 0.748, 0]}>
-        <boxGeometry args={[2.7, 0.005, 0.02]} />
-        <meshBasicMaterial color="#ffffff" />
-      </mesh>
-      {/* Net */}
-      <mesh position={[0, 0.82, 0]}>
-        <boxGeometry args={[0.02, 0.15, 1.6]} />
-        <meshStandardMaterial color="#f8fafc" transparent opacity={0.8} />
-      </mesh>
-      {/* Legs */}
-      <mesh position={[-0.9, 0.35, 0]} castShadow>
-        <boxGeometry args={[0.06, 0.7, 1.2]} />
-        <meshStandardMaterial color="#0f172a" />
-      </mesh>
-      <mesh position={[0.9, 0.35, 0]} castShadow>
-        <boxGeometry args={[0.06, 0.7, 1.2]} />
-        <meshStandardMaterial color="#0f172a" />
-      </mesh>
+      <RigidBody type="fixed" colliders={false} friction={0.3} restitution={0.75}>
+        {/* Table Top */}
+        <mesh position={[0, 0.72, 0]} castShadow receiveShadow>
+          <boxGeometry args={[2.7, 0.05, 1.5]} />
+          <meshStandardMaterial color="#1d4ed8" roughness={0.3} />
+        </mesh>
+        <CuboidCollider args={[1.35, 0.025, 0.75]} position={[0, 0.72, 0]} />
+        {/* Table Center Stripe */}
+        <mesh position={[0, 0.748, 0]}>
+          <boxGeometry args={[2.7, 0.005, 0.02]} />
+          <meshBasicMaterial color="#ffffff" />
+        </mesh>
+        {/* Net */}
+        <mesh position={[0, 0.82, 0]}>
+          <boxGeometry args={[0.02, 0.15, 1.6]} />
+          <meshStandardMaterial color="#f8fafc" transparent opacity={0.8} />
+        </mesh>
+        <CuboidCollider args={[0.01, 0.075, 0.8]} position={[0, 0.82, 0]} restitution={0.1} />
+        {/* Legs */}
+        <mesh position={[-0.9, 0.35, 0]} castShadow>
+          <boxGeometry args={[0.06, 0.7, 1.2]} />
+          <meshStandardMaterial color="#0f172a" />
+        </mesh>
+        <mesh position={[0.9, 0.35, 0]} castShadow>
+          <boxGeometry args={[0.06, 0.7, 1.2]} />
+          <meshStandardMaterial color="#0f172a" />
+        </mesh>
+      </RigidBody>
 
       {/* Ball */}
-      <mesh ref={ballMesh} castShadow>
-        <sphereGeometry args={[0.03, 12, 12]} />
-        <meshStandardMaterial color="#ea580c" roughness={0.2} />
-      </mesh>
+      <RigidBody
+        ref={ballRef}
+        position={[0, 0.85, 0]}
+        colliders="ball"
+        restitution={0.85}
+        friction={0.2}
+        linearVelocity={[2.5, 0.8, 0.5]}
+        onCollisionEnter={() => audioFX.billiardHit(0.25)}
+      >
+        <mesh castShadow>
+          <sphereGeometry args={[0.03, 12, 12]} />
+          <meshStandardMaterial color="#ea580c" roughness={0.2} />
+        </mesh>
+      </RigidBody>
 
-      {/* Left Paddle */}
-      <mesh ref={leftPaddleMesh} castShadow>
-        <boxGeometry args={[0.03, 0.18, 0.14]} />
-        <meshStandardMaterial color="#dc2626" />
-      </mesh>
-      {/* Right Paddle */}
-      <mesh ref={rightPaddleMesh} castShadow>
-        <boxGeometry args={[0.03, 0.18, 0.14]} />
-        <meshStandardMaterial color="#1e293b" />
-      </mesh>
+      {/* Left Paddle (kinematic, AI-driven) */}
+      <RigidBody ref={leftPaddleRef} type="kinematicPosition" position={[-1.3, 0.85, 0]} colliders="cuboid">
+        <mesh castShadow>
+          <boxGeometry args={[0.03, 0.18, 0.14]} />
+          <meshStandardMaterial color="#dc2626" />
+        </mesh>
+      </RigidBody>
+      {/* Right Paddle (kinematic, AI-driven) */}
+      <RigidBody ref={rightPaddleRef} type="kinematicPosition" position={[1.3, 0.85, 0]} colliders="cuboid">
+        <mesh castShadow>
+          <boxGeometry args={[0.03, 0.18, 0.14]} />
+          <meshStandardMaterial color="#1e293b" />
+        </mesh>
+      </RigidBody>
     </group>
   );
 };
 
-// Interactive Gym Area with Animated Workout Rigs
+// Interactive Gym Area with Animated Workout Rigs (no physics needed — a simple
+// looping local animation, per PRD section 8.3).
 export const GymMinigame = ({ position }: { position: [number, number, number] }) => {
-  const barbellY = useRef(0.9);
+  const barbellGroupRef = useRef<THREE.Group>(null);
   const treadmillRef = useRef<THREE.Mesh>(null);
 
   useFrame(() => {
-    // Weight bench bench-press animation
-    barbellY.current = 0.85 + Math.abs(Math.sin(Date.now() * 0.003)) * 0.45;
+    if (barbellGroupRef.current) {
+      barbellGroupRef.current.position.y = 0.85 + Math.abs(Math.sin(Date.now() * 0.003)) * 0.45;
+    }
   });
 
   return (
@@ -294,7 +310,7 @@ export const GymMinigame = ({ position }: { position: [number, number, number] }
           <meshStandardMaterial color="#475569" metalness={0.8} />
         </mesh>
         {/* Animated Barbell */}
-        <group position={[0.4, barbellY.current, 0]}>
+        <group ref={barbellGroupRef} position={[0.4, 0.9, 0]}>
           <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
             <cylinderGeometry args={[0.02, 0.02, 1.2, 8]} />
             <meshStandardMaterial color="#94a3b8" metalness={0.9} />

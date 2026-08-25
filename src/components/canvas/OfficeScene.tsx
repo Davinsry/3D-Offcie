@@ -2,9 +2,11 @@
 
 import React, { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment } from '@react-three/drei';
+import { OrbitControls, Grid } from '@react-three/drei';
+import { Physics } from '@react-three/rapier';
 import { OfficeLayout } from './OfficeLayout';
 import { AgentMesh } from './AgentMesh';
+import { CrowdManager } from './CrowdManager';
 import { BilliardMinigame, PingPongMinigame, GymMinigame } from './InteractiveMinigames';
 import { useOfficeStore } from '@/store/useOfficeStore';
 
@@ -37,7 +39,7 @@ export const OfficeScene = () => {
           intensity={lightIntensity}
           color={directionalColor}
           castShadow
-          shadow-mapSize={[2048, 2048]}
+          shadow-mapSize={[1024, 1024]}
           shadow-camera-left={-25}
           shadow-camera-right={25}
           shadow-camera-top={25}
@@ -45,11 +47,6 @@ export const OfficeScene = () => {
         />
         <pointLight position={[0, 10, 0]} intensity={dayNightCycle === 'night' ? 0.8 : 0.4} color="#38bdf8" />
         
-        {/* Atmosphere */}
-        <Suspense fallback={null}>
-          <Environment preset={dayNightCycle === 'day' ? 'city' : 'night'} />
-        </Suspense>
-
         {/* Ground grid */}
         <Grid
           position={[0, -0.02, 0]}
@@ -67,21 +64,27 @@ export const OfficeScene = () => {
         {/* Office Layout & Geometry */}
         <OfficeLayout />
 
-        {/* Interactive Minigames */}
-        <BilliardMinigame position={[-6, 0, 4]} />
-        <PingPongMinigame position={[-4, 0, 8]} />
-        <GymMinigame position={[-7, 0, 11]} />
+        {/* recast-navigation NavMesh + Crowd: single source of truth for all agent movement */}
+        <CrowdManager />
 
-        {/* Agents with crowd simulation and low-poly characters */}
-        {agentList.map((agent) => (
-          <AgentMesh
-            key={agent.id}
-            agent={agent}
-            allAgents={agentList}
-            isSelected={selectedAgentId === agent.id}
-            onSelect={selectAgent}
-          />
-        ))}
+        {/* Interactive Minigames — real Rapier physics for billiards + ping pong */}
+        <Physics gravity={[0, -9.81, 0]}>
+          <BilliardMinigame position={[-6, 0, 4]} />
+          <PingPongMinigame position={[-4, 0, 8]} />
+        </Physics>
+        <GymMinigame position={[-7, 0, 10]} />
+
+        {/* Agents with crowd simulation and rigged, animated characters */}
+        <Suspense fallback={null}>
+          {agentList.map((agent) => (
+            <AgentMesh
+              key={agent.id}
+              agent={agent}
+              isSelected={selectedAgentId === agent.id}
+              onSelect={selectAgent}
+            />
+          ))}
+        </Suspense>
 
         {/* Controls */}
         <OrbitControls

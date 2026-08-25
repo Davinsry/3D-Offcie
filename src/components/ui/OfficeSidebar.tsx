@@ -46,16 +46,34 @@ export const OfficeSidebar = () => {
     triggerPizzaDelivery,
     sendAgentToActivity,
     resetSimulation,
+    connectionStatus,
   } = useOfficeStore();
 
   const selectedAgent = selectedAgentId ? agents[selectedAgentId] : null;
+
+  const statusDotColor =
+    connectionStatus === 'connected'
+      ? 'bg-emerald-500'
+      : connectionStatus === 'connecting'
+        ? 'bg-amber-400'
+        : connectionStatus === 'error'
+          ? 'bg-rose-500'
+          : 'bg-slate-500';
+  const statusLabel =
+    connectionStatus === 'connected'
+      ? 'Live · connected to Hermes backend'
+      : connectionStatus === 'connecting'
+        ? 'Connecting to Hermes backend…'
+        : connectionStatus === 'error'
+          ? 'Hermes backend connection error — retrying'
+          : 'Demo mode · manual trigger only (no NEXT_PUBLIC_HERMES_WS_URL configured, or backend offline)';
 
   return (
     <div className="w-96 h-full bg-slate-900/95 border-r border-slate-800 flex flex-col text-slate-200 z-10 backdrop-blur-md shadow-2xl">
       {/* Header */}
       <div className="p-4 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center space-x-2.5">
-          <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+          <div className={`w-3 h-3 rounded-full ${statusDotColor} animate-pulse`} title={statusLabel} />
           <div>
             <h1 className="font-bold text-sm tracking-wide text-white uppercase">Hermes Office 3D</h1>
             <p className="text-[11px] text-slate-400">Multi-Agent Live Simulator</p>
