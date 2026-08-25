@@ -56,8 +56,18 @@ class AudioFXService {
     });
   }
 
+  private lastBilliardHitAt = 0;
+
   public billiardHit(volume: number = 0.2) {
     if (!this.soundEnabled) return;
+    // Resting/settling contacts in the Rapier physics sim (balls on felt,
+    // paddle-ball nudges) can fire many collision events within the same
+    // frame or two — without a cooldown this floods the AudioContext with
+    // overlapping clicks that just sound like broken/glitchy noise.
+    const nowMs = Date.now();
+    if (nowMs - this.lastBilliardHitAt < 40) return;
+    this.lastBilliardHitAt = nowMs;
+
     const ctx = this.initCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
