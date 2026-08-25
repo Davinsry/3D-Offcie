@@ -59,8 +59,14 @@ export const CharacterModel: React.FC<CharacterModelProps> = ({ color, isSelecte
     currentAnim.current = anim;
   }, [anim, actions]);
 
+  // Soldier.glb's mesh geometry is already authored in real-world meters
+  // (~1.83m tall at scale 1 — verified by loading it and measuring its
+  // computed Box3, not guessed) with its origin at ground/feet level, which
+  // lines up directly with how agent.position places the character group at
+  // y=0. No rescale needed; an earlier 0.035 factor here was wrong and
+  // shrank every agent down to ~6cm — effectively invisible in the scene.
   return (
-    <group ref={group} scale={0.035}>
+    <group ref={group}>
       <primitive object={cloned} />
     </group>
   );

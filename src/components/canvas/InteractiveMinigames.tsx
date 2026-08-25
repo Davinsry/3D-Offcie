@@ -7,14 +7,20 @@ import { RigidBody, CuboidCollider, type RapierRigidBody, type IntersectionEnter
 import { audioFX } from '@/lib/audio';
 
 const BALL_COLORS = ['#ffffff', '#eab308', '#3b82f6', '#ef4444', '#a855f7', '#0f172a', '#10b981'];
+const BALL_RADIUS = 0.045;
+// Playing surface top sits at y=0.85 (see the floor CuboidCollider below) —
+// resting height for a ball is exactly surface + radius. Spawning any higher
+// than that made every ball free-fall and bounce chaotically the instant the
+// scene loaded, before anyone had "shot" anything.
+const BALL_REST_Y = 0.85 + BALL_RADIUS;
 const RACK_POSITIONS: [number, number, number][] = [
-  [-0.6, 0.92, 0],
-  [0.3, 0.92, 0],
-  [0.42, 0.92, 0.07],
-  [0.42, 0.92, -0.07],
-  [0.54, 0.92, 0.14],
-  [0.54, 0.92, 0],
-  [0.54, 0.92, -0.14],
+  [-0.6, BALL_REST_Y, 0],
+  [0.3, BALL_REST_Y, 0],
+  [0.42, BALL_REST_Y, 0.07],
+  [0.42, BALL_REST_Y, -0.07],
+  [0.54, BALL_REST_Y, 0.14],
+  [0.54, BALL_REST_Y, 0],
+  [0.54, BALL_REST_Y, -0.14],
 ];
 const POCKETS: [number, number][] = [
   [-1.32, -0.6],
@@ -24,7 +30,7 @@ const POCKETS: [number, number][] = [
   [0, 0.62],
   [1.32, 0.6],
 ];
-const HOLD_AREA: [number, number, number] = [1.9, 0.92, -0.7];
+const HOLD_AREA: [number, number, number] = [1.9, BALL_REST_Y, -0.7];
 
 // Real Rapier-physics billiards: dynamic RigidBody spheres for each ball, fixed
 // cushion colliders around the table, sensor colliders at each pocket. Two NPC
@@ -92,12 +98,19 @@ export const BilliardMinigame = ({ position }: { position: [number, number, numb
           <boxGeometry args={[2.8, 0.02, 1.4]} />
           <meshStandardMaterial color="#047857" roughness={0.9} />
         </mesh>
-        <CuboidCollider args={[1.4, 0.02, 0.7]} position={[0, 0.83, 0]} friction={0.6} />
-        {/* Cushions */}
-        <CuboidCollider args={[0.03, 0.08, 0.66]} position={[-1.33, 0.9, 0]} restitution={0.75} />
-        <CuboidCollider args={[0.03, 0.08, 0.66]} position={[1.33, 0.9, 0]} restitution={0.75} />
-        <CuboidCollider args={[1.33, 0.08, 0.03]} position={[0, 0.9, -0.65]} restitution={0.75} />
-        <CuboidCollider args={[1.33, 0.08, 0.03]} position={[0, 0.9, 0.65]} restitution={0.75} />
+        <CuboidCollider args={[1.4, 0.02, 0.7]} position={[0, 0.85, 0]} friction={0.6} />
+        {/* Cushions — outer face flush with the playing surface's true edge
+            (half-extents 1.4 x / 0.7 z above) so a ball can't roll into the
+            gap between cushion and table edge and fall off the far side. */}
+        <CuboidCollider args={[0.03, 0.08, 0.66]} position={[-1.37, 0.9, 0]} restitution={0.6} />
+        <CuboidCollider args={[0.03, 0.08, 0.66]} position={[1.37, 0.9, 0]} restitution={0.6} />
+        {/* Front/back cushions are split in two, leaving a gap in the middle
+            for the two side pockets — a single unbroken cushion here would
+            have walled those pockets off entirely. */}
+        <CuboidCollider args={[0.615, 0.08, 0.03]} position={[-0.715, 0.9, -0.67]} restitution={0.6} />
+        <CuboidCollider args={[0.615, 0.08, 0.03]} position={[0.715, 0.9, -0.67]} restitution={0.6} />
+        <CuboidCollider args={[0.615, 0.08, 0.03]} position={[-0.715, 0.9, 0.67]} restitution={0.6} />
+        <CuboidCollider args={[0.615, 0.08, 0.03]} position={[0.715, 0.9, 0.67]} restitution={0.6} />
       </RigidBody>
 
       {/* 6 Pockets (sensors) */}
@@ -132,10 +145,11 @@ export const BilliardMinigame = ({ position }: { position: [number, number, numb
           }}
           position={pos}
           colliders="ball"
-          restitution={0.85}
+          restitution={0.65}
           friction={0.15}
           linearDamping={0.5}
           angularDamping={0.6}
+          ccd
           onCollisionEnter={() => audioFX.billiardHit(0.2)}
         >
           <mesh castShadow>
